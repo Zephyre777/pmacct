@@ -518,6 +518,16 @@ int skinny_bmp_daemon()
     char dump_roundoff[] = "m";
     time_t tmp_time;
 
+    if (!config.bmp_dump_time_slots) {
+      config.bmp_dump_time_slots = 1;
+    }
+
+    bmp_misc_db->current_slot = 0;
+    
+    if (config.bmp_dump_refresh_time % config.bmp_dump_time_slots != 0) {
+      Log(LOG_WARNING, "WARN ( %s/%s ): 'bmp_dump_time_slots' is not a divisor of 'bmp_dump_refresh_time', please fix.\n", config.name, bmp_misc_db->log_str);
+    }
+
     if (config.bmp_dump_refresh_time) {
       gettimeofday(&bmp_misc_db->log_tstamp, NULL);
       dump_refresh_deadline = bmp_misc_db->log_tstamp.tv_sec;
@@ -550,6 +560,12 @@ int skinny_bmp_daemon()
     exit_gracefully(1);
 #endif
   }
+
+  if (!config.writer_id_string) {
+    config.writer_id_string = DYNNAME_DEFAULT_WRITER_ID;
+  }
+
+  dynname_tokens_prepare(config.writer_id_string, &bmp_misc_db->writer_id_tokens, DYN_STR_WRITER_ID);
 
   select_fd = bkp_select_fd = (config.bmp_sock + 1);
   recalc_fds = FALSE;
@@ -658,20 +674,22 @@ int skinny_bmp_daemon()
 	  bgp_peer_log_seq_init(&bmp_misc_db->log_seq);
       }
 
+
+      int refreshTimePerSlot = config.bmp_dump_refresh_time / config.bmp_dump_time_slots;
       if (bmp_misc_db->dump_backend_methods) {
         while (bmp_misc_db->log_tstamp.tv_sec > dump_refresh_deadline) {
           bmp_misc_db->dump.tstamp.tv_sec = dump_refresh_deadline;
           bmp_misc_db->dump.tstamp.tv_usec = 0;
           compose_timestamp(bmp_misc_db->dump.tstamp_str, SRVBUFLEN, &bmp_misc_db->dump.tstamp, FALSE,
 			    config.timestamps_since_epoch, config.timestamps_rfc3339, config.timestamps_utc);
-	  bmp_misc_db->dump.period = config.bmp_dump_refresh_time;
+	  bmp_misc_db->dump.period = refreshTimePerSlot;
 
 	  if (bgp_peer_log_seq_has_ro_bit(&bmp_misc_db->log_seq))
 	    bgp_peer_log_seq_init(&bmp_misc_db->log_seq);
 
           bmp_handle_dump_event(max_peers_idx);
 
-          dump_refresh_deadline += config.bmp_dump_refresh_time;
+          dump_refresh_deadline += refreshTimePerSlot;
         }
       }
 

@@ -1,6 +1,6 @@
 /*  
     pmacct (Promiscuous mode IP Accounting package)
-    pmacct is Copyright (C) 2003-2021 by Paolo Lucente
+    pmacct is Copyright (C) 2003-2022 by Paolo Lucente
 */
 
 /*
@@ -26,7 +26,6 @@
 #include "base64.h"
 #ifdef WITH_UNYTE_UDP_NOTIF
 #include <unyte-udp-notif/unyte_udp_collector.h>
-#include <unyte-udp-notif/unyte_udp_defaults.h>
 #endif
 
 /* defines */
@@ -46,9 +45,10 @@
 #define TELEMETRY_DECODER_CISCO_V0	3
 #define TELEMETRY_DECODER_CISCO_V1	4
 
-#define TELEMETRY_DATA_DECODER_UNKNOWN	0
-#define TELEMETRY_DATA_DECODER_JSON	1
-#define TELEMETRY_DATA_DECODER_GPB	2
+#define TELEMETRY_DATA_DECODER_UNKNOWN      0
+#define TELEMETRY_DATA_DECODER_JSON         1
+#define TELEMETRY_DATA_DECODER_GPB          2
+#define TELEMETRY_DATA_DECODER_JSON_STRING  3
 
 #define TELEMETRY_CISCO_VERSION_0		0
 #define TELEMETRY_CISCO_HDR_LEN_V0		12

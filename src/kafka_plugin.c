@@ -37,7 +37,7 @@ void kafka_plugin(int pipe_fd, struct configuration *cfgptr, void *ptr)
 {
   struct pkt_data *data;
   struct ports_table pt;
-  struct protos_table prt;
+  struct protos_table prt, tost;
   unsigned char *pipebuf;
   struct pollfd pfd;
   struct insert_data idata;
@@ -152,12 +152,14 @@ void kafka_plugin(int pipe_fd, struct configuration *cfgptr, void *ptr)
   memset(&nc, 0, sizeof(nc));
   memset(&pt, 0, sizeof(pt));
   memset(&prt, 0, sizeof(prt));
+  memset(&tost, 0, sizeof(tost));
 
   load_networks(config.networks_file, &nt, &nc);
   set_net_funcs(&nt);
 
   if (config.ports_file) load_ports(config.ports_file, &pt);
   if (config.protos_file) load_protos(config.protos_file, &prt);
+  if (config.tos_file) load_tos(config.tos_file, &tost);
   
   memset(&idata, 0, sizeof(idata));
   memset(&prim_ptrs, 0, sizeof(prim_ptrs));
@@ -217,7 +219,7 @@ void kafka_plugin(int pipe_fd, struct configuration *cfgptr, void *ptr)
     poll_ops:
     P_update_time_reference(&idata);
 
-    if (idata.now > refresh_deadline) P_cache_handle_flush_event(&pt, &prt);
+    if (idata.now > refresh_deadline) P_cache_handle_flush_event(&pt, &prt, &tost);
 
     recv_budget = 0;
     if (poll_bypass) {
@@ -301,12 +303,16 @@ void kafka_plugin(int pipe_fd, struct configuration *cfgptr, void *ptr)
 	  (*net_funcs[num])(&nt, &nc, &data->primitives, prim_ptrs.pbgp, &nfd);
 
 	if (config.ports_file) {
-          if (!pt.table[data->primitives.src_port]) data->primitives.src_port = 0;
-          if (!pt.table[data->primitives.dst_port]) data->primitives.dst_port = 0;
+          if (!pt.table[data->primitives.src_port]) data->primitives.src_port = PM_L4_PORT_OTHERS;
+          if (!pt.table[data->primitives.dst_port]) data->primitives.dst_port = PM_L4_PORT_OTHERS;
         }
 
 	if (config.protos_file) {
-	  if (!prt.table[data->primitives.proto]) data->primitives.proto = 0;
+	  if (!prt.table[data->primitives.proto]) data->primitives.proto = PM_IP_PROTO_OTHERS;
+	}
+
+	if (config.tos_file) {
+	  if (!tost.table[data->primitives.tos]) data->primitives.tos = PM_IP_TOS_OTHERS;
 	}
 
         prim_ptrs.data = data;
@@ -349,6 +355,7 @@ void kafka_cache_purge(struct chained_cache *queue[], int index, int safe_action
   struct primitives_ptrs prim_ptrs;
   struct pkt_data dummy_data;
   pid_t writer_pid = getpid();
+  struct dynname_tokens writer_id_tokens;
 
   //TODO solve these warnings correctly
   (void)pvlen;
@@ -435,6 +442,12 @@ void kafka_cache_purge(struct chained_cache *queue[], int index, int safe_action
     exit_gracefully(1);
   }
 
+  if (!config.writer_id_string) {
+    config.writer_id_string = DYNNAME_DEFAULT_WRITER_ID;
+  }
+
+  dynname_tokens_prepare(config.writer_id_string, &writer_id_tokens, DYN_STR_WRITER_ID);
+
   for (j = 0, stop = 0; (!stop) && P_preprocess_funcs[j]; j++)
     stop = P_preprocess_funcs[j](queue, &index, j);
 
@@ -507,7 +520,6 @@ void kafka_cache_purge(struct chained_cache *queue[], int index, int safe_action
       if (json_str) {
 	Log(LOG_DEBUG, "DEBUG ( %s/%s ): %s\n\n", config.name, config.type, json_str);
 	ret = p_kafka_produce_data(&kafkap_kafka_host, json_str, strlen(json_str));
-
 	free(json_str);
 	json_str = NULL;
       }
@@ -544,7 +556,7 @@ void kafka_cache_purge(struct chained_cache *queue[], int index, int safe_action
 
 	if (p_avro_local_buf) {
 	  ret = p_kafka_produce_data(&kafkap_kafka_host, p_avro_local_buf, strlen(p_avro_local_buf));
-	  free(p_avro_local_buf);
+    free(p_avro_local_buf);
 	}
       }
 
@@ -594,7 +606,7 @@ void kafka_cache_purge(struct chained_cache *queue[], int index, int safe_action
       int idx;
 
       for (idx = 0; idx < N_PRIMITIVES && cjhandler[idx]; idx++) cjhandler[idx](json_obj, queue[j]);
-      add_writer_name_and_pid_json(json_obj, config.name, writer_pid);
+      add_writer_name_and_pid_json(json_obj, &writer_id_tokens);
 
       json_str = compose_json_str(json_obj);
 #endif
@@ -608,7 +620,7 @@ void kafka_cache_purge(struct chained_cache *queue[], int index, int safe_action
 			   pvlen, queue[j]->bytes_counter, queue[j]->packet_counter,
 			   queue[j]->flow_counter, queue[j]->tcp_flags, &queue[j]->basetime,
 			   queue[j]->stitch, p_avro_iface);
-      add_writer_name_and_pid_avro(p_avro_value, config.name, writer_pid);
+      add_writer_name_and_pid_avro_v2(p_avro_value, &writer_id_tokens);
 
       if (config.message_broker_output & PRINT_OUTPUT_AVRO_BIN) {
 	size_t p_avro_value_size;
@@ -729,7 +741,6 @@ void kafka_cache_purge(struct chained_cache *queue[], int index, int safe_action
 
         Log(LOG_DEBUG, "DEBUG ( %s/%s ): %s\n\n", config.name, config.type, json_str);
         ret = p_kafka_produce_data(&kafkap_kafka_host, json_str, strlen(json_str));
-
 	if (config.sql_multi_values) {
 	  json_str = tmp_str;
 	  strcpy(json_buf, json_str);
@@ -770,11 +781,11 @@ void kafka_cache_purge(struct chained_cache *queue[], int index, int safe_action
 
 	if (config.message_broker_output & PRINT_OUTPUT_AVRO_BIN) { 
 	  ret = p_kafka_produce_data(&kafkap_kafka_host, p_avro_buf, p_avro_len);
-	  if (!config.kafka_avro_schema_registry) avro_writer_reset(p_avro_writer);
+    if (!config.kafka_avro_schema_registry) avro_writer_reset(p_avro_writer);
 	}
 	else if (config.message_broker_output & PRINT_OUTPUT_AVRO_JSON) {
 	  ret = p_kafka_produce_data(&kafkap_kafka_host, p_avro_buf, strlen(p_avro_buf));
-	  memset(p_avro_buf, 0, config.avro_buffer_size);
+    memset(p_avro_buf, 0, config.avro_buffer_size);
         }
 
         p_avro_buffer_full = FALSE;
@@ -794,7 +805,6 @@ void kafka_cache_purge(struct chained_cache *queue[], int index, int safe_action
 	/* no handling of dyn routing keys here: not compatible */
 	Log(LOG_DEBUG, "DEBUG ( %s/%s ): %s\n\n", config.name, config.type, json_buf);
 	ret = p_kafka_produce_data(&kafkap_kafka_host, json_buf, strlen(json_buf));
-
 	if (!ret) qn += mv_num;
       }
     }
@@ -804,14 +814,14 @@ void kafka_cache_purge(struct chained_cache *queue[], int index, int safe_action
       if (config.message_broker_output & PRINT_OUTPUT_AVRO_BIN) {
 	if (p_avro_len) {
 	  ret = p_kafka_produce_data(&kafkap_kafka_host, p_avro_buf, p_avro_len);
-	  if (!config.kafka_avro_schema_registry) avro_writer_free(p_avro_writer);
+    if (!config.kafka_avro_schema_registry) avro_writer_free(p_avro_writer);
           if (!ret) qn += mv_num;
 	}
       }
       else if (config.message_broker_output & PRINT_OUTPUT_AVRO_JSON) {
         if (strlen(p_avro_buf)) {
 	  ret = p_kafka_produce_data(&kafkap_kafka_host, p_avro_buf, strlen(p_avro_buf));
-	  if (!ret) qn += mv_num;
+    if (!ret) qn += mv_num;
 	}
       }
 #endif
@@ -833,7 +843,6 @@ void kafka_cache_purge(struct chained_cache *queue[], int index, int safe_action
 		     the last message in batch in case of partitioned topics */
         Log(LOG_DEBUG, "DEBUG ( %s/%s ): %s\n\n", config.name, config.type, json_str);
         ret = p_kafka_produce_data(&kafkap_kafka_host, json_str, strlen(json_str));
-
         free(json_str);
         json_str = NULL;
       }
@@ -863,14 +872,14 @@ void kafka_cache_purge(struct chained_cache *queue[], int index, int safe_action
 	}
 #endif
 	ret = p_kafka_produce_data(&kafkap_kafka_host, p_avro_buf, p_avro_len);
-	if (!config.kafka_avro_schema_registry) avro_writer_reset(p_avro_writer);
+  if (!config.kafka_avro_schema_registry) avro_writer_reset(p_avro_writer);
       }
       else if (config.message_broker_output & PRINT_OUTPUT_AVRO_JSON) {
 	char *p_avro_local_buf = write_avro_json_record_to_buf(p_avro_value);
 
 	if (p_avro_local_buf) {
 	  ret = p_kafka_produce_data(&kafkap_kafka_host, p_avro_local_buf, strlen(p_avro_local_buf));
-	  free(p_avro_local_buf);
+    free(p_avro_local_buf);
 	}
       }
 

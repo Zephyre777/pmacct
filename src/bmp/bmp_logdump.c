@@ -25,6 +25,7 @@
 #include "bgp/bgp.h"
 #include "bmp.h"
 #include "thread_pool.h"
+#include "util.h"
 #if defined WITH_RABBITMQ
 #include "amqp_common.h"
 #endif
@@ -35,16 +36,11 @@
 #include "plugin_cmn_avro.h"
 #endif
 
-
 int bmp_log_msg(struct bgp_peer *peer, struct bmp_data *bdata, struct pm_list *tlvs, bgp_tag_t *tag,
 		void *log_data, u_int64_t log_seq, char *event_type, int output, int log_type)
 {
   struct bgp_misc_structs *bms = bgp_select_misc_db(FUNC_TYPE_BMP);
   int ret = 0, amqp_ret = 0, kafka_ret = 0, etype = BGP_LOGDUMP_ET_NONE;
-
-#if defined (WITH_JANSSON) || defined (WITH_AVRO)
-  pid_t writer_pid = getpid();
-#endif
 
   if (!bms || !peer || !peer->log || !bdata || !event_type) return ERR;
 
@@ -138,7 +134,7 @@ int bmp_log_msg(struct bgp_peer *peer, struct bmp_data *bdata, struct pm_list *t
 
     if ((config.bmp_daemon_msglog_amqp_routing_key && etype == BGP_LOGDUMP_ET_LOG) ||
 	(config.bmp_dump_amqp_routing_key && etype == BGP_LOGDUMP_ET_DUMP)) {
-      add_writer_name_and_pid_json(obj, config.proc_name, writer_pid);
+      add_writer_name_and_pid_json(obj, &bms->writer_id_tokens);
 #ifdef WITH_RABBITMQ
       amqp_ret = write_and_free_json_amqp(peer->log->amqp_host, obj);
       p_amqp_unset_routing_key(peer->log->amqp_host);
@@ -147,7 +143,7 @@ int bmp_log_msg(struct bgp_peer *peer, struct bmp_data *bdata, struct pm_list *t
 
     if ((config.bmp_daemon_msglog_kafka_topic && etype == BGP_LOGDUMP_ET_LOG) ||
         (config.bmp_dump_kafka_topic && etype == BGP_LOGDUMP_ET_DUMP)) {
-      add_writer_name_and_pid_json(obj, config.proc_name, writer_pid);
+      add_writer_name_and_pid_json(obj, &bms->writer_id_tokens);
 #ifdef WITH_KAFKA
       kafka_ret = write_and_free_json_kafka(peer->log->kafka_host, obj);
       p_kafka_unset_topic(peer->log->kafka_host);
@@ -164,7 +160,7 @@ int bmp_log_msg(struct bgp_peer *peer, struct bmp_data *bdata, struct pm_list *t
     size_t p_avro_obj_len, p_avro_len;
     void *p_avro_local_buf = NULL;
 
-    char wid[SHORTSHORTBUFLEN], tstamp_str[SRVBUFLEN];
+    char tstamp_str[SRVBUFLEN];
 
     p_avro_writer = avro_writer_memory(bms->avro_buf, LARGEBUFLEN);
 
@@ -259,9 +255,7 @@ int bmp_log_msg(struct bgp_peer *peer, struct bmp_data *bdata, struct pm_list *t
       break;
     }
 
-    pm_avro_check(avro_value_get_by_name(&p_avro_obj, "writer_id", &p_avro_field, NULL));
-    snprintf(wid, SHORTSHORTBUFLEN, "%s/%u", config.proc_name, writer_pid);
-    pm_avro_check(avro_value_set_string(&p_avro_field, wid));
+    add_writer_name_and_pid_avro_v2(p_avro_obj, &bms->writer_id_tokens);
 
     if (((config.bmp_daemon_msglog_file && etype == BGP_LOGDUMP_ET_LOG) ||
          (config.bmp_dump_file && etype == BGP_LOGDUMP_ET_DUMP) ||
@@ -1623,12 +1617,16 @@ void bmp_handle_dump_event(int max_peers_idx)
       if (bmp_peers[idx].self.fd) {
 	peer = &bmp_peers[idx].self;
 	bdsell = peer->bmp_se;
-
-	if (bdsell && bdsell->start) bmp_dump_se_ll_destroy(bdsell);
+  
+	if (bdsell && bdsell->start && abs((int) pm_djb2_string_hash((unsigned char*) peer->addr_str)) % config.bmp_dump_time_slots == bms->current_slot)
+	{
+	  bmp_dump_se_ll_destroy(bdsell);
+	}
       }
     }
     break;
   }
+  bms->current_slot = (bms->current_slot + 1) % config.bmp_dump_time_slots;
 }
 
 int bmp_dump_event_runner(struct pm_dump_runner *pdr)
@@ -1744,10 +1742,17 @@ int bmp_dump_event_runner(struct pm_dump_runner *pdr)
 											     config.bmp_dump_kafka_avro_schema_registry);
   }
 #endif
+  
+  if (config.bmp_dump_time_slots > 1) {
+    Log(LOG_INFO, "INFO ( %s/%s ): *** Dumping BMP tables - SLOT %d / %d ***\n",
+	config.name, bms->log_str, bms->current_slot + 1, config.bmp_dump_time_slots);
+  }
 
   for (peer = NULL, saved_peer = NULL, peers_idx = pdr->first; peers_idx <= pdr->last; peers_idx++) {
-    if (bmp_peers[peers_idx].self.fd) {
-      peer = &bmp_peers[peers_idx].self;
+    peer = &bmp_peers[peers_idx].self;
+
+    int bmp_router_slot = abs((int) pm_djb2_string_hash((unsigned char*) peer->addr_str)) % config.bmp_dump_time_slots;
+    if (bmp_peers[peers_idx].self.fd && bmp_router_slot == bms->current_slot) {
       peer->log = &peer_log; /* abusing struct bgp_peer a bit, but we are in a child */
       bdsell = peer->bmp_se;
 
@@ -1900,6 +1905,7 @@ int bmp_dump_event_runner(struct pm_dump_runner *pdr)
       tables_num++;
     }
   }
+
 
 #ifdef WITH_RABBITMQ
   if (config.bmp_dump_amqp_routing_key) {

@@ -183,6 +183,7 @@ struct configuration {
   int kafka_avro_schema_refresh_time;
   char *kafka_avro_schema_registry;
   char *kafka_config_file;
+  char *kafka_writer_id;
   int print_cache_entries;
   int print_markers;
   int print_output;
@@ -208,6 +209,7 @@ struct configuration {
 #ifdef WITH_GNUTLS
   int nfacctd_dtls_sock;
 #endif
+  char *writer_id_string;
   char *nfacctd_allow_file;
   int nfacctd_time;
   int nfacctd_time_new;
@@ -290,6 +292,7 @@ struct configuration {
   char *telemetry_dump_latest_file;
   int telemetry_dump_output;
   int telemetry_dump_refresh_time;
+  int telemetry_dump_time_slots;
   char *telemetry_dump_amqp_host;
   char *telemetry_dump_amqp_vhost;
   char *telemetry_dump_amqp_user;
@@ -395,6 +398,7 @@ struct configuration {
   char *bgp_table_dump_latest_file;
   char *bgp_table_dump_avro_schema_file;
   int bgp_table_dump_refresh_time;
+  int bgp_table_dump_time_slots;
   char *bgp_table_dump_amqp_host;
   char *bgp_table_dump_amqp_vhost;
   char *bgp_table_dump_amqp_user;
@@ -473,6 +477,7 @@ struct configuration {
   char *bmp_dump_latest_file;
   char *bmp_dump_avro_schema_file;
   int bmp_dump_refresh_time;
+  int bmp_dump_time_slots;
   char *bmp_dump_amqp_host;
   char *bmp_dump_amqp_vhost;
   char *bmp_dump_amqp_user;
@@ -539,6 +544,7 @@ struct configuration {
   int networks_cache_entries;
   char *ports_file;
   char *protos_file;
+  char *tos_file;
   char *a_filter;
   int bpfp_a_num;
   struct bpf_program *bpfp_a_table[AGG_FILTER_ENTRIES];
@@ -549,6 +555,7 @@ struct configuration {
   int tcpflags_encode_as_array;
   int mpls_label_stack_encode_as_array;
   int fwd_status_encode_as_string;
+  int tos_encode_as_dscp;
   int maps_refresh;
   int maps_index;
   int maps_entries;
@@ -621,6 +628,7 @@ struct configuration {
   int tmp_bgp_daemon_route_refresh;
   int tmp_bgp_daemon_origin_type_int;
   int tmp_telemetry_udp_notif_legacy;
+  int tmp_telemetry_decode_cisco_v1_json_string;
   size_t thread_stack;
   char *rpki_roas_file;
   char *rpki_rtr_cache;

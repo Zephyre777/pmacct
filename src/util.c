@@ -21,6 +21,7 @@
 
 /* includes */
 #include "pmacct.h"
+#include "util-data.h"
 #ifdef WITH_KAFKA
 #include "kafka_common.h"
 #endif
@@ -530,6 +531,335 @@ void link_latest_output_file(char *link_filename, char *filename_to_link)
 void close_output_file(FILE *f)
 {
   if (f) fclose(f);
+}
+
+void dynname_tokens_prepare(char *s, struct dynname_tokens *tokens, int type)
+{
+  char *ptr_str = NULL, *ptr_var = NULL, *ptr_text = NULL;
+  int var_mode = FALSE, var_close = FALSE, text_mode = FALSE, text_close = FALSE;
+  int token_idx = 0, rlen = 0, slen, var_len = 0, text_len = 0, dollar = FALSE, ret;
+  char var_buf[VERYSHORTBUFLEN], text_buf[VERYSHORTBUFLEN];
+
+  assert(type <= DYN_STR_MAX);
+
+  slen = strlen(s);
+
+  memset(tokens, 0, sizeof(struct dynname_tokens));
+
+  for (ptr_str = s; rlen < slen; rlen++) {
+
+    process_dollar:
+    /* Let's reckon and handle '$' signs */
+    if (ptr_str[rlen] == '\x24') {
+      dollar = TRUE;
+
+      /* if we are processing a variable, let's close it to process the upcoming one */
+      if (var_mode && var_len) {
+        var_close = TRUE;
+      }
+
+      /* if we are processing text, let's close it to process the upcoming variable */
+      if (text_mode && text_len) {
+        text_close = TRUE;
+      }
+
+      /* variable parsing */
+      if (!var_mode) {
+        var_mode = TRUE;
+        ptr_var = &ptr_str[rlen];
+      }
+    }
+    else {
+      /* Collecting text */
+      if (!var_mode && !text_mode) {
+	text_mode = TRUE;
+        ptr_text = &ptr_str[rlen];
+      }
+    }
+
+    process_closing:
+    /*
+       Let's close the current variable parsing, two cases:
+       * we were parsing a variable and found a new one starting up;
+       * separator character hit, time to switch to text mode;
+    */
+    if (var_close) {
+      if (var_len > 1 /* dollar plus at least one valid char */ && var_len < sizeof(var_buf)) {
+        int reg_idx, reg_match = FALSE;
+
+	memset(var_buf, 0, sizeof(var_buf));
+        strncpy(var_buf, ptr_var + 1, var_len - 1);
+
+	for (reg_idx = 0; dynname_token_dict_registry[reg_idx].id; reg_idx++) {
+	  if (dynname_token_dict_registry[reg_idx].id == type) {
+	    ret = dynname_token_dict_registry[reg_idx].func(tokens, var_buf, token_idx);
+	    if (ret == E_NOTFOUND) {
+	      Log(LOG_ERR, "ERROR ( %s/%s ): dynname_tokens_prepare(): unknown variable '%s' in dictionary '%s'.\n",
+		  config.name, config.type, var_buf, dynname_token_dict_registry[reg_idx].desc);
+	      exit_gracefully(1);
+	    }
+
+	    reg_match = TRUE;
+
+	    break;
+	  }
+	}
+
+	if (!reg_match) {
+	  assert(dynname_token_dict_registry[reg_idx].id == DYN_STR_UNKNOWN);
+	  dynname_token_dict_registry[reg_idx].func(tokens, var_buf, token_idx);
+	  /* exit */
+	}
+
+	token_idx++;
+      }
+      else {
+	ptr_var[var_len] = '\0';
+        Log(LOG_ERR, "ERROR ( %s/%s ): dynname_tokens_prepare(): invalid variable '%s' in '%s'.\n", config.name, config.type, ptr_var, s);
+	exit_gracefully(1);
+      }
+
+      ptr_var = NULL;
+      var_mode = FALSE;
+      var_close = FALSE;
+      var_len = 0;
+
+      goto process_dollar;
+    }
+
+    /* We were collecting text and found a new variable starting up:
+       Let's close text and open variable */
+    if (text_close) {
+      if (text_len && text_len < sizeof(text_buf)) {
+	memset(text_buf, 0, sizeof(text_buf));
+        strncpy(text_buf, ptr_text, text_len);
+
+	tokens->func[token_idx] = dynname_text_token_handler;
+        tokens->static_arg[token_idx] = strdup(text_buf);
+
+	token_idx++;
+      }
+      else {
+	ptr_text[text_len] = '\0';
+	Log(LOG_ERR, "ERROR ( %s/%s ): dynname_tokens_prepare(): invalid text '%s' in '%s'.\n", config.name, config.type, ptr_text, s);
+	exit_gracefully(1);
+      }
+
+      ptr_text = NULL;
+      text_mode = FALSE;
+      text_close = FALSE;
+      text_len = 0;
+
+      goto process_dollar;
+    }
+
+    if (var_mode) {
+      if (dollar) {
+	dollar = FALSE;
+	var_len++;
+	continue;
+      }
+
+      /* valid charset for a variable: a-z, A-Z, 0-9, _ */
+      if ((ptr_str[rlen] >= '\x30' && ptr_str[rlen] <= '\x39') ||
+          (ptr_str[rlen] >= '\x41' && ptr_str[rlen] <= '\x5a') ||
+          (ptr_str[rlen] >= '\x61' && ptr_str[rlen] <= '\x7a') ||
+	  (ptr_str[rlen] == '\x5f')) {
+	var_len++;
+      }
+      else {
+	var_close = TRUE;
+	goto process_closing;
+      }
+    }
+
+    if (text_mode) {
+      text_len++;
+    }
+
+    if (token_idx == DYNNAME_TOKENS_MAX) {
+      Log(LOG_ERR, "ERROR ( %s/%s ): dynname_tokens_prepare(): too many tokens (text / variable combination) defined in '%s'.\n",
+	  config.name, config.type, s);
+      exit_gracefully(1);
+    }
+  }
+
+  if (var_mode) {
+    if (var_len > 1 /* dollar plus at least one valid char */ && var_len < sizeof(var_buf)) {
+      int reg_idx, reg_match = FALSE;
+
+      memset(var_buf, 0, sizeof(var_buf));
+      strncpy(var_buf, ptr_var + 1, var_len - 1);
+
+      for (reg_idx = 0; dynname_token_dict_registry[reg_idx].id; reg_idx++) {
+	if (dynname_token_dict_registry[reg_idx].id == type) {
+	  tokens->type = &dynname_token_dict_registry[reg_idx];
+	  ret = dynname_token_dict_registry[reg_idx].func(tokens, var_buf, token_idx);
+	  if (ret == E_NOTFOUND) {
+	    Log(LOG_ERR, "ERROR ( %s/%s ): dynname_tokens_prepare(): unknown variable '%s' in dictionary '%s'.\n",
+	        config.name, config.type, var_buf, dynname_token_dict_registry[reg_idx].desc);
+	    exit_gracefully(1);
+	  }
+
+	  reg_match = TRUE;
+
+	  break;
+	}
+      }
+
+      if (!reg_match) {
+	assert(dynname_token_dict_registry[reg_idx].id == DYN_STR_UNKNOWN);
+	dynname_token_dict_registry[reg_idx].func(tokens, var_buf, token_idx);
+	/* exit */
+      }
+    }
+    else {
+      ptr_var[var_len] = '\0';
+      Log(LOG_ERR, "ERROR ( %s/%s ): dynname_tokens_prepare(): invalid variable '%s' in '%s'.\n", config.name, config.type, ptr_var, s);
+      exit_gracefully(1);
+    }
+  }
+
+  if (text_mode) {
+    if (text_len && text_len < sizeof(text_buf)) {
+      memset(text_buf, 0, sizeof(text_buf));
+      strncpy(text_buf, ptr_text, text_len);
+
+      tokens->func[token_idx] = dynname_text_token_handler;
+      tokens->static_arg[token_idx] = strdup(text_buf);
+    }
+    else {
+      ptr_text[text_len] = '\0';
+      Log(LOG_ERR, "ERROR ( %s/%s ): dynname_tokens_prepare(): invalid text '%s' in '%s'.\n", config.name, config.type, ptr_text, s);
+      exit_gracefully(1);
+    }
+  }
+}
+
+void dynname_tokens_free(struct dynname_tokens *tokens)
+{
+  int idx;
+
+  for (idx = 0; idx < DYNNAME_TOKENS_MAX; idx++) {
+    tokens->func[idx] = NULL;
+
+    if (tokens->static_arg[idx]) {
+      free(tokens->static_arg[idx]);
+      tokens->static_arg[idx] = NULL;
+    }
+  }
+}
+
+int dynname_tokens_compose(char *s, int slen, struct dynname_tokens *tokens, void *dyn_arg)
+{
+  int ret = FALSE, idx;
+
+  for (idx = 0; (idx < DYNNAME_TOKENS_MAX) && tokens->func[idx]; idx++) { 
+    ret = (*tokens->func[idx])(s, slen, tokens->static_arg[idx], dyn_arg);
+    if (ret != FALSE) {
+      Log(LOG_WARNING, "WARN ( %s/%s ): dynname_tokens_compose(): string too short when dynamic composing %s.\n", config.name, config.type, tokens->type->desc);
+      break;
+    } 
+  }
+
+  return ret;
+}
+
+int dynname_text_token_handler(char *s, int slen, char *static_arg, void *dyn_arg)
+{
+  int st_len = strlen(s);
+  int sa_len = strlen(static_arg);
+  int ret = FALSE;
+
+  if ((st_len + sa_len) < slen) {
+    strcat(s, static_arg);
+  }
+  else {
+    ret = ERR;
+  }
+
+  return ret;
+}
+
+int dwi_proc_name_handler(char *s, int slen, char *static_arg, void *dyn_arg)
+{
+  int st_len = strlen(s);
+  int ret = FALSE;
+  char *name = NULL;
+
+  if (config.type_id == PLUGIN_ID_CORE) {
+    name = config.proc_name;
+  }
+  else {
+    name = config.name;
+  }
+
+  if (strlen(name) + st_len < slen) {
+    strcat(s, name);
+  }
+  else {
+    ret = ERR;
+  }
+
+  return ret;
+}
+
+int dwi_writer_pid_handler(char *s, int slen, char *static_arg, void *dyn_arg)
+{
+  int st_len = strlen(s);
+  int ret = FALSE;
+  char pid[SUPERSHORTBUFLEN];
+
+  snprintf(pid, sizeof(pid), "%d", getpid());
+  if (strlen(pid) + st_len < slen) {
+    strcat(s, pid);
+  }
+  else {
+    ret = ERR;
+  }
+
+  return ret;
+}
+
+int dwi_pmacct_build_handler(char *s, int slen, char *static_arg, void *dyn_arg)
+{
+  int st_len = strlen(s);
+  int pb_len = strlen(PMACCT_BUILD);
+  int ret = FALSE;
+
+  if (pb_len + st_len < slen) {
+    strcat(s, PMACCT_BUILD);
+  }
+  else {
+    ret = ERR;
+  }
+
+  return ret;
+}
+
+int dtdr_writer_id(void *tkns, char *var_name, int var_idx)
+{
+  struct dynname_tokens *tokens = tkns;
+  int dindex = 0, ret = E_NOTFOUND;
+
+  for (dindex = 0; strcmp(dynname_writer_id_dictionary[dindex].key, ""); dindex++) {
+    if (!strcasecmp(dynname_writer_id_dictionary[dindex].key, var_name)) {
+      tokens->func[var_idx] = dynname_writer_id_dictionary[dindex].func;
+      tokens->static_arg[var_idx] = FALSE;
+      ret = FALSE;
+      break;
+    }
+  }
+
+  return ret;
+}
+
+int dtdr_unknown(void *tkns, char *var_name, int var_idx)
+{
+  Log(LOG_ERR, "ERROR ( %s/%s ): dtdr_unknown(): unknown dynname_tokens_prepare() type.\n", config.name, config.type);
+  exit_gracefully(1);
+
+  return FALSE;
 }
 
 /* Future: tokenization part to be moved away from runtime */
@@ -2024,12 +2354,13 @@ void write_and_free_json(FILE *f, void *obj)
   }
 }
 
-void add_writer_name_and_pid_json(void *obj, char *name, pid_t writer_pid)
+void add_writer_name_and_pid_json(void *obj, struct dynname_tokens *tokens)
 {
-  char wid[SHORTSHORTBUFLEN]; 
+  char wid[SHORTSHORTBUFLEN];
   json_t *json_obj = (json_t *) obj;
 
-  snprintf(wid, SHORTSHORTBUFLEN, "%s/%u", name, writer_pid);
+  memset(wid, 0, sizeof(wid));
+  dynname_tokens_compose(wid, sizeof(wid), tokens, NULL);
   json_object_set_new_nocheck(json_obj, "writer_id", json_string(wid));
 }
 #else
@@ -2045,7 +2376,7 @@ void write_and_free_json(FILE *f, void *obj)
   if (config.debug) Log(LOG_DEBUG, "DEBUG ( %s/%s ): write_and_free_json(): JSON object not created due to missing --enable-jansson\n", config.name, config.type);
 }
 
-void add_writer_name_and_pid_json(void *obj, char *name, pid_t writer_pid)
+void add_writer_name_and_pid_json(void *obj, struct dynname_tokens *tokens)
 {
   if (config.debug) Log(LOG_DEBUG, "DEBUG ( %s/%s ): add_writer_name_and_pid_json(): JSON object not created due to missing --enable-jansson\n", config.name, config.type);
 }
@@ -3358,3 +3689,17 @@ void distribute_work(struct pm_dump_runner *pdr, u_int64_t seqno, int workers, u
     }
   }
 }
+
+// Dan Bernstein's hash variant 2 (XOR)
+unsigned long pm_djb2_string_hash(unsigned char *str)
+{
+  unsigned long hash = 5381;
+
+  while (*str){
+    hash = hash * 33 ^ ((int) *str);
+    str++;
+  }
+
+  return hash;
+}
+
