@@ -571,7 +571,7 @@ void P_cache_insert_pending(struct chained_cache *queue[], int index, struct cha
   free(container);
 }
 
-void P_cache_handle_flush_event(struct ports_table *pt, struct protos_table *prt)
+void P_cache_handle_flush_event(struct ports_table *pt, struct protos_table *prt, struct protos_table *tost)
 {
   pid_t ret;
 
@@ -612,6 +612,7 @@ void P_cache_handle_flush_event(struct ports_table *pt, struct protos_table *prt
     load_networks(config.networks_file, &nt, &nc);
     load_ports(config.ports_file, pt);
     load_protos(config.protos_file, prt);
+    load_tos(config.tos_file, tost);
 
     reload_map = FALSE;
   }
@@ -1196,7 +1197,8 @@ void load_protos(char *filename, struct protos_table *pt)
 	    ret = atoi(buf); 
 	  }
 
-	  if ((ret > 0) && (ret < PROTOS_TABLE_ENTRIES)) {
+	  /* 255 / 'others' excluded from valid IP protocols */
+	  if ((ret > 0) && (ret < (PROTOS_TABLE_ENTRIES - 1))) {
 	    pt->table[ret] = TRUE;
 	  }
 	  else {
@@ -1292,4 +1294,9 @@ void load_ports(char *filename, struct ports_table *pt)
     pt->timestamp = st.st_mtime;
   }
   else exit_gracefully(1);
+}
+
+void load_tos(char *filename, struct protos_table *tost)
+{
+  load_protos(filename, tost);
 }

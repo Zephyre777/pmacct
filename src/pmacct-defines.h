@@ -40,6 +40,8 @@
 #define MAX_PROTOCOL_LEN 32 
 #define DEFAULT_AVRO_SCHEMA_REFRESH_TIME 60
 #define MAX_AVRO_SCHEMA 65535 
+#define MIN_REFRESH_TIME 60
+#define MAX_REFRESH_TIME 86400
 #define DEFAULT_IMT_PLUGIN_POLL_TIMEOUT 5
 #define DEFAULT_SLOTH_SLEEP_TIME 5
 #define DEFAULT_SEP ","
@@ -469,6 +471,8 @@
 #define DYN_STR_MONGODB_TABLE		4
 #define DYN_STR_SQL_TABLE		5
 #define DYN_STR_PRINT_FILE		6
+#define DYN_STR_WRITER_ID		7
+#define DYN_STR_MAX			7
 
 typedef u_int32_t pm_class_t;
 typedef u_int64_t pm_id_t;

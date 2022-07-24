@@ -1150,6 +1150,17 @@ void add_writer_name_and_pid_avro(avro_value_t value, char *name, pid_t writer_p
   pm_avro_check(avro_value_set_string(&field, wid));
 }
 
+void add_writer_name_and_pid_avro_v2(avro_value_t value, struct dynname_tokens *tokens)
+{
+  char wid[SHORTSHORTBUFLEN];
+  avro_value_t field;
+
+  memset(wid, 0, sizeof(wid));
+  dynname_tokens_compose(wid, sizeof(wid), tokens, NULL);
+  pm_avro_check(avro_value_get_by_name(&value, "writer_id", &field, NULL));
+  pm_avro_check(avro_value_set_string(&field, wid));
+}
+
 void write_avro_schema_to_file(char *filename, avro_schema_t schema)
 {
   FILE *avro_fp;
@@ -1653,17 +1664,15 @@ int compose_mpls_label_stack_data(u_int32_t *label_stack, int ls_len, avro_value
     memset(&label_buf, 0, sizeof(label_buf));
     snprintf(label_buf, MAX_MPLS_LABEL_LEN, "%u", *(label_stack + idx_0));
     if (avro_value_get_by_name(&v_type_record, "mpls_label_stack", &v_type_array, NULL) == 0) {
-      if (strncmp("0", label_buf, 1)) {
-        memset(&idx_buf, 0, sizeof(idx_buf));
-        memset(&label_idx_buf, 0, sizeof(label_idx_buf));
-        snprintf(idx_buf, MAX_IDX_LEN, "%zu", idx_0);
-        strncat(label_idx_buf, idx_buf, (MAX_MPLS_LABEL_IDX_LEN - max_mpls_label_idx_len_dec));
-        strncat(label_idx_buf, "-", (MAX_MPLS_LABEL_IDX_LEN - max_mpls_label_idx_len_dec));
-        strncat(label_idx_buf, label_buf, (MAX_MPLS_LABEL_IDX_LEN - max_mpls_label_idx_len_dec));
-        max_mpls_label_idx_len_dec = (strlen(idx_buf) + strlen("-") + strlen(label_buf) + 3);
-        if (avro_value_append(&v_type_array, &v_type_string, NULL) == 0) {
-          avro_value_set_string(&v_type_string, label_idx_buf);
-        }
+      memset(&idx_buf, 0, sizeof(idx_buf));
+      memset(&label_idx_buf, 0, sizeof(label_idx_buf));
+      snprintf(idx_buf, MAX_IDX_LEN, "%zu", idx_0);
+      strncat(label_idx_buf, idx_buf, (MAX_MPLS_LABEL_IDX_LEN - max_mpls_label_idx_len_dec));
+      strncat(label_idx_buf, "-", (MAX_MPLS_LABEL_IDX_LEN - max_mpls_label_idx_len_dec));
+      strncat(label_idx_buf, label_buf, (MAX_MPLS_LABEL_IDX_LEN - max_mpls_label_idx_len_dec));
+      max_mpls_label_idx_len_dec = (strlen(idx_buf) + strlen("-") + strlen(label_buf) + 3);
+      if (avro_value_append(&v_type_array, &v_type_string, NULL) == 0) {
+        avro_value_set_string(&v_type_string, label_idx_buf);
       }
     }
   }

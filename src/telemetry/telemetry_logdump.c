@@ -25,6 +25,7 @@
 #include "bmp/bmp.h"
 #include "telemetry.h"
 #include "thread_pool.h"
+#include "util.h"
 #if defined WITH_RABBITMQ
 #include "amqp_common.h"
 #endif
@@ -38,10 +39,6 @@ int telemetry_log_msg(telemetry_peer *peer, struct telemetry_data *t_data, telem
 {
   telemetry_misc_structs *tms;
   int ret = 0, amqp_ret = 0, kafka_ret = 0, etype = TELEMETRY_LOGDUMP_ET_NONE;
-
-#if defined (WITH_JANSSON) || defined (WITH_AVRO)
-  pid_t writer_pid = getpid();
-#endif
 
   if (!peer || !peer->log || !log_data || !log_data_len || !t_data || !event_type) return ERR;
 
@@ -117,6 +114,10 @@ int telemetry_log_msg(telemetry_peer *peer, struct telemetry_data *t_data, telem
 
       json_object_set_new_nocheck(obj, "serialization", json_string("gpb"));
     }
+    else if (data_decoder == TELEMETRY_DATA_DECODER_JSON_STRING) {
+      json_object_set_new_nocheck(obj, "telemetry_data", json_string((char *) log_data));
+      json_object_set_new_nocheck(obj, "serialization", json_string("json_string"));
+    }
     else if (data_decoder == TELEMETRY_DATA_DECODER_UNKNOWN) {
       json_object_set_new_nocheck(obj, "serialization", json_string("unknown"));
     }
@@ -127,7 +128,7 @@ int telemetry_log_msg(telemetry_peer *peer, struct telemetry_data *t_data, telem
 
     if ((config.telemetry_msglog_amqp_routing_key && etype == TELEMETRY_LOGDUMP_ET_LOG) ||
         (config.telemetry_dump_amqp_routing_key && etype == TELEMETRY_LOGDUMP_ET_DUMP)) {
-      add_writer_name_and_pid_json(obj, config.proc_name, writer_pid);
+      add_writer_name_and_pid_json(obj, &tms->writer_id_tokens);
 #ifdef WITH_RABBITMQ
       amqp_ret = write_and_free_json_amqp(peer->log->amqp_host, obj);
       p_amqp_unset_routing_key(peer->log->amqp_host);
@@ -136,7 +137,7 @@ int telemetry_log_msg(telemetry_peer *peer, struct telemetry_data *t_data, telem
 
     if ((config.telemetry_msglog_kafka_topic && etype == TELEMETRY_LOGDUMP_ET_LOG) ||
         (config.telemetry_dump_kafka_topic && etype == TELEMETRY_LOGDUMP_ET_DUMP)) {
-      add_writer_name_and_pid_json(obj, config.proc_name, writer_pid);
+      add_writer_name_and_pid_json(obj, &tms->writer_id_tokens);
 #ifdef WITH_KAFKA
       kafka_ret = write_and_free_json_kafka(peer->log->kafka_host, obj);
       p_kafka_unset_topic(peer->log->kafka_host);
@@ -328,12 +329,18 @@ void telemetry_handle_dump_event(struct telemetry_data *t_data, int max_peers_id
         peer = &telemetry_peers[idx];
         tdsell = peer->bmp_se;
 
-        if (tdsell && tdsell->start) telemetry_dump_se_ll_destroy(tdsell);
+ 	if (tdsell &&
+	    tdsell->start &&
+	    abs((int) pm_djb2_string_hash((unsigned char *) peer->addr_str)) % config.telemetry_dump_time_slots == tms->current_slot) {
+	  telemetry_dump_se_ll_destroy(tdsell);
+	}
       }
     }
 
     break;
   }
+
+  tms->current_slot = (tms->current_slot + 1) % config.telemetry_dump_time_slots;
 }
 
 int telemetry_dump_event_runner(struct pm_dump_runner *pdr)
@@ -394,9 +401,20 @@ int telemetry_dump_event_runner(struct pm_dump_runner *pdr)
   start = time(NULL);
   tables_num = 0;
 
+  if (config.telemetry_dump_time_slots > 1) {
+    Log(LOG_INFO, "INFO ( %s/%s ): *** Dumping telemetry data - SLOT %d / %d ***\n",
+	config.name, tms->log_str, tms->current_slot + 1, config.telemetry_dump_time_slots);
+  }
+
   for (peer = NULL, saved_peer = NULL, peers_idx = pdr->first; peers_idx <= pdr->last; peers_idx++) {
     if (telemetry_peers[peers_idx].fd) {
+      char peer_addr[INET6_ADDRSTRLEN];
+
       peer = &telemetry_peers[peers_idx];
+      addr_to_str(peer_addr, &(peer->addr));
+
+      int telemetry_slot = abs((int) pm_djb2_string_hash((unsigned char *) peer_addr)) % config.telemetry_dump_time_slots;
+      if (telemetry_slot == tms->current_slot) {
       peer->log = &peer_log; /* abusing telemetry_peer a bit, but we are in a child */
       tdsell = peer->bmp_se;
 
@@ -479,6 +497,7 @@ int telemetry_dump_event_runner(struct pm_dump_runner *pdr)
       strlcpy(last_filename, current_filename, SRVBUFLEN);
       telemetry_peer_dump_close(peer, &telemetry_logdump_tag, config.telemetry_dump_output, FUNC_TYPE_TELEMETRY);
       tables_num++;
+    }
     }
   }
 

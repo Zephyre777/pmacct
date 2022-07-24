@@ -26,9 +26,34 @@
 #define ADD 0
 #define SUB 1
 
+#define DYNNAME_TOKENS_MAX 32
+#define DYNNAME_DEFAULT_WRITER_ID "$proc_name/$writer_pid"
+
+/* typedefs */
+typedef int (*dynname_token_handler) (char *, int, char *, void *);
+typedef int (*dynname_token_dict_registry_handler) (void *, char *, int);
+
+/* structs */
 struct p_broker_timers {
   time_t last_fail;
   int retry_interval;
+};
+
+struct dynname_token_dict_registry_line {
+  int id;
+  char *desc;
+  dynname_token_dict_registry_handler func;
+};
+
+struct dynname_type_dictionary_line {
+  char key[SRVBUFLEN];
+  dynname_token_handler func;
+};
+
+struct dynname_tokens {
+  const struct dynname_token_dict_registry_line *type;
+  dynname_token_handler func[DYNNAME_TOKENS_MAX];
+  void *static_arg[DYNNAME_TOKENS_MAX];
 };
 
 /* prototypes */
@@ -118,7 +143,7 @@ extern int ft2af(u_int8_t);
 
 extern char *compose_json_str(void *);
 extern void write_and_free_json(FILE *, void *);
-extern void add_writer_name_and_pid_json(void *, char *, pid_t);
+extern void add_writer_name_and_pid_json(void *, struct dynname_tokens *);
 extern void write_file_binary(FILE *, void *, size_t);
 
 extern void compose_timestamp(char *, int, struct timeval *, int, int, int, int);
@@ -197,4 +222,17 @@ extern time_t P_broker_timers_get_last_fail(struct p_broker_timers *);
 extern primptrs_func primptrs_funcs[PRIMPTRS_FUNCS_N];
 
 extern void distribute_work(struct pm_dump_runner *, u_int64_t, int, u_int64_t);
+
+extern unsigned long pm_djb2_string_hash(unsigned char *str);
+
+extern void dynname_tokens_prepare(char *, struct dynname_tokens *, int);
+extern void dynname_tokens_free(struct dynname_tokens *);
+extern int dynname_tokens_compose(char *, int, struct dynname_tokens *, void *);
+extern int dynname_text_token_handler(char *, int, char *, void *);
+extern int dwi_proc_name_handler(char *, int, char *, void *);
+extern int dwi_writer_pid_handler(char *, int, char *, void *);
+extern int dwi_pmacct_build_handler(char *, int, char *, void *);
+
+extern int dtdr_writer_id(void *, char *, int);
+extern int dtdr_unknown(void *, char *, int);
 #endif //UTIL_H

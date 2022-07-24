@@ -651,6 +651,28 @@ int cfg_key_fwd_status_encode_as_string(char *filename, char *name, char *value_
   return changes;
 }
 
+int cfg_key_tos_encode_as_dscp(char *filename, char *name, char *value_ptr)
+{
+  struct plugins_list_entry *list = plugins_list;
+  int value, changes = 0;
+
+  value = parse_truefalse(value_ptr);
+  if (value < 0) return ERR;
+
+  if (!name) for (; list; list = list->next, changes++) list->cfg.tos_encode_as_dscp = value;
+  else {
+    for (; list; list = list->next) {
+      if (!strcmp(name, list->name)) {
+        list->cfg.tos_encode_as_dscp = value;
+        changes++;
+        break;
+      }
+    }
+  }
+
+  return changes;
+}
+
 int cfg_key_mpls_label_stack_encode_as_array(char *filename, char *name, char *value_ptr)
 {
   struct plugins_list_entry *list = plugins_list;
@@ -1911,7 +1933,7 @@ int cfg_key_message_broker_output(char *filename, char *name, char *value_ptr)
     value = PRINT_OUTPUT_JSON;
 #else
     value = PRINT_OUTPUT_JSON;
-    Log(LOG_WARNING, "WARN: [%s] 'message_broker_output' set to json but will produce no output (missing --enable-jansson).\n", filename);
+    Log(LOG_WARNING, "WARN: [%s] '[amqp|kafka]_output' set to json but will produce no output (missing --enable-jansson).\n", filename);
 #endif
   }
   else if (!strcmp(value_ptr, "avro") || !strcmp(value_ptr, "avro_bin")) {
@@ -1919,7 +1941,7 @@ int cfg_key_message_broker_output(char *filename, char *name, char *value_ptr)
     value = PRINT_OUTPUT_AVRO_BIN;
 #else
     value = PRINT_OUTPUT_AVRO_BIN;
-    Log(LOG_WARNING, "WARN: [%s] 'message_broker_output' set to avro but will produce no output (missing --enable-avro).\n", filename);
+    Log(LOG_WARNING, "WARN: [%s] '[amqp|kafka]_output' set to avro but will produce no output (missing --enable-avro).\n", filename);
 #endif
   }
   else if (!strcmp(value_ptr, "avro_json")) {
@@ -1927,14 +1949,14 @@ int cfg_key_message_broker_output(char *filename, char *name, char *value_ptr)
     value = PRINT_OUTPUT_AVRO_JSON;
 #else
     value = PRINT_OUTPUT_AVRO_JSON;
-    Log(LOG_WARNING, "WARN: [%s] 'message_broker_output' set to avro but will produce no output (missing --enable-avro).\n", filename);
+    Log(LOG_WARNING, "WARN: [%s] '[amqp|kafka]_output' set to avro but will produce no output (missing --enable-avro).\n", filename);
 #endif
   }
   else if (!strcmp(value_ptr, "custom")) {
     value = PRINT_OUTPUT_CUSTOM;
   }
   else {
-    Log(LOG_WARNING, "WARN: [%s] Invalid 'message_broker_output' value '%s'\n", filename, value_ptr);
+    Log(LOG_WARNING, "WARN: [%s] Invalid '[amqp|kafka]_output' value '%s'\n", filename, value_ptr);
     return ERR;
   }
 
@@ -2975,6 +2997,25 @@ int cfg_key_protos_file(char *filename, char *name, char *value_ptr)
   return changes;
 }
 
+int cfg_key_tos_file(char *filename, char *name, char *value_ptr)
+{
+  struct plugins_list_entry *list = plugins_list;
+  int changes = 0;
+
+  if (!name) for (; list; list = list->next, changes++) list->cfg.tos_file = value_ptr;
+  else {
+    for (; list; list = list->next) {
+      if (!strcmp(name, list->name)) {
+        list->cfg.tos_file = value_ptr;
+        changes++;
+        break;
+      }
+    }
+  }
+
+  return changes;
+}
+
 int cfg_key_maps_refresh(char *filename, char *name, char *value_ptr)
 {
   struct plugins_list_entry *list = plugins_list;
@@ -3408,6 +3449,25 @@ int cfg_key_nfacctd_dtls_port(char *filename, char *name, char *value_ptr)
 
   for (; list; list = list->next, changes++) list->cfg.nfacctd_dtls_port = value;
   if (name) Log(LOG_WARNING, "WARN: [%s] plugin name not supported for key 'nfacctd_dtls_port'. Globalized.\n", filename);
+
+  return changes;
+}
+
+int cfg_key_writer_id_string(char *filename, char *name, char *value_ptr)
+{
+  struct plugins_list_entry *list = plugins_list;
+  int changes = 0;
+
+  if (!name) for (; list; list = list->next, changes++) list->cfg.writer_id_string = value_ptr;
+  else {
+    for (; list; list = list->next) {
+      if (!strcmp(name, list->name)) {
+        list->cfg.writer_id_string = value_ptr;
+        changes++;
+        break;
+      }
+    }
+  }
 
   return changes;
 }
@@ -4916,13 +4976,38 @@ int cfg_key_bmp_daemon_dump_refresh_time(char *filename, char *name, char *value
   }
 
   value = atoi(value_ptr);
-  if (value < 60 || value > 86400) {
-    Log(LOG_ERR, "WARN: [%s] 'bmp_dump_refresh_time' value has to be >= 60 and <= 86400 secs.\n", filename);
+  if (value < MIN_REFRESH_TIME || value > MAX_REFRESH_TIME) {
+    Log(LOG_ERR, "WARN: [%s] 'bmp_dump_refresh_time' value has to be >= %d and <= %d secs.\n", filename, MIN_REFRESH_TIME, MAX_REFRESH_TIME);
     return ERR;
   }
 
   for (; list; list = list->next, changes++) list->cfg.bmp_dump_refresh_time = value;
   if (name) Log(LOG_WARNING, "WARN: [%s] plugin name not supported for key 'bmp_dump_refresh_time'. Globalized.\n", filename);
+
+  return changes;
+}
+
+int cfg_key_bmp_daemon_dump_time_slots(char *filename, char *name, char *value_ptr)
+{
+  struct plugins_list_entry *list = plugins_list;
+  int value, changes = 0, i, len = strlen(value_ptr);
+
+  for (i = 0; i < len; i++) {
+    if (!isdigit(value_ptr[i]) && !isspace(value_ptr[i])) {
+      Log(LOG_ERR, "WARN: [%s] 'bmp_dump_time_slots' is expected to be an integer value: '%c'\n", filename, value_ptr[i]);
+      return ERR;
+    }
+  }
+
+  value = atoi(value_ptr);
+
+  if (value < 1 || value > MAX_REFRESH_TIME) {
+    Log(LOG_ERR, "WARN: [%s] 'bmp_dump_time_slots' value has to be >= 1 and <= %d.\n", filename, MAX_REFRESH_TIME);
+    return ERR;
+  }
+
+  for (; list; list = list->next, changes++) list->cfg.bmp_dump_time_slots = value;
+  if (name) Log(LOG_WARNING, "WARN: [%s] plugin name not supported for key 'bmp_dump_time_slots'. Globalized.\n", filename);
 
   return changes;
 }
@@ -6931,13 +7016,37 @@ int cfg_key_bgp_daemon_table_dump_refresh_time(char *filename, char *name, char 
   }
 
   value = atoi(value_ptr);
-  if (value < 60 || value > 86400) {
-    Log(LOG_ERR, "WARN: [%s] 'bgp_table_dump_refresh_time' value has to be >= 60 and <= 86400 secs.\n", filename);
+  if (value < MIN_REFRESH_TIME || value > MAX_REFRESH_TIME) {
+    Log(LOG_ERR, "WARN: [%s] 'bgp_table_dump_refresh_time' value has to be >= %d and <= %d secs.\n", filename, MIN_REFRESH_TIME, MAX_REFRESH_TIME);
     return ERR;
   }
 
   for (; list; list = list->next, changes++) list->cfg.bgp_table_dump_refresh_time = value;
   if (name) Log(LOG_WARNING, "WARN: [%s] plugin name not supported for key 'bgp_table_dump_refresh_time'. Globalized.\n", filename);
+
+  return changes;
+}
+
+int cfg_key_bgp_daemon_table_dump_time_slots(char *filename, char *name, char *value_ptr)
+{
+  struct plugins_list_entry *list = plugins_list;
+  int value, changes = 0, i, len = strlen(value_ptr);
+
+  for (i = 0; i < len; i++) {
+    if (!isdigit(value_ptr[i]) && !isspace(value_ptr[i])) {
+      Log(LOG_ERR, "WARN: [%s] 'bgp_table_dump_time_slots' is expected to be an integer value: '%c'\n", filename, value_ptr[i]);
+      return ERR;
+    }
+  }
+
+  value = atoi(value_ptr);
+  if (value < 1 || value > MAX_REFRESH_TIME) {
+    Log(LOG_ERR, "WARN: [%s] 'bgp_table_dump_time_slots' value has to be >= 1 and <= %d.\n", filename, MAX_REFRESH_TIME);
+    return ERR;
+  }
+
+  for (; list; list = list->next, changes++) list->cfg.bgp_table_dump_time_slots = value;
+  if (name) Log(LOG_WARNING, "WARN: [%s] plugin name not supported for key 'bgp_table_dump_time_slots'. Globalized.\n", filename);
 
   return changes;
 }
@@ -7646,6 +7755,20 @@ int cfg_key_tmp_telemetry_daemon_udp_notif_legacy(char *filename, char *name, ch
   return changes;
 }
 
+int cfg_key_tmp_telemetry_decode_cisco_v1_json_string(char *filename, char *name, char *value_ptr)
+{
+  struct plugins_list_entry *list = plugins_list;
+  int value, changes = 0;
+
+  value = parse_truefalse(value_ptr);
+  if (value < 0) return ERR;
+
+  for (; list; list = list->next, changes++) list->cfg.tmp_telemetry_decode_cisco_v1_json_string = value;
+  if (name) Log(LOG_WARNING, "WARN: [%s] plugin name not supported for key 'tmp_telemetry_decode_cisco_v1_json_string'. Globalized.\n", filename);
+
+  return changes;
+}
+
 int cfg_key_thread_stack(char *filename, char *name, char *value_ptr)
 {
   struct plugins_list_entry *list = plugins_list;
@@ -8239,13 +8362,38 @@ int cfg_key_telemetry_dump_refresh_time(char *filename, char *name, char *value_
   }
 
   value = atoi(value_ptr);
-  if (value < 10 || value > 86400) {
-    Log(LOG_ERR, "WARN: [%s] 'telemetry_dump_refresh_time' value has to be >= 10 and <= 86400 secs.\n", filename);
+  if (value < MIN_REFRESH_TIME || value > MAX_REFRESH_TIME) {
+    Log(LOG_ERR, "WARN: [%s] 'telemetry_dump_refresh_time' value has to be >= %d and <= %d secs.\n", filename, MIN_REFRESH_TIME, MAX_REFRESH_TIME);
     return ERR;
   }
 
   for (; list; list = list->next, changes++) list->cfg.telemetry_dump_refresh_time = value;
   if (name) Log(LOG_WARNING, "WARN: [%s] plugin name not supported for key 'telemetry_dump_refresh_time'. Globalized.\n", filename);
+
+  return changes;
+}
+
+int cfg_key_telemetry_dump_time_slots(char *filename, char *name, char *value_ptr)
+{
+  struct plugins_list_entry *list = plugins_list;
+  int value, changes = 0, i, len = strlen(value_ptr);
+
+  for (i = 0; i < len; i++) {
+    if (!isdigit(value_ptr[i]) && !isspace(value_ptr[i])) {
+      Log(LOG_ERR, "WARN: [%s] 'telemetry_dump_time_slots' is expected to be an integer value: '%c'\n", filename, value_ptr[i]);
+      return ERR;
+    }
+  }
+
+  value = atoi(value_ptr);
+
+  if (value < 1 || value > MAX_REFRESH_TIME) {
+    Log(LOG_ERR, "WARN: [%s] 'telemetry_dump_time_slots' value has to be >= 1 and <= %d.\n", filename, MAX_REFRESH_TIME);
+    return ERR;
+  }
+
+  for (; list; list = list->next, changes++) list->cfg.telemetry_dump_time_slots = value;
+  if (name) Log(LOG_WARNING, "WARN: [%s] plugin name not supported for key 'telemetry_dump_time_slots'. Globalized.\n", filename);
 
   return changes;
 }
