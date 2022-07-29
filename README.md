@@ -69,6 +69,7 @@ struct QNode *newNode(void *k, size_t k_len)
 
 The main actions that need to be triggered by commands, are sending the siganls to refresh the timestamp and to force to change collector status. To use them, firstly start the collector:
 
+
 ```bash
  ~# sudo systemctl nfacctd-bmp-locA01.service
  ~# sudo systemctl nfacctd-bmp-locB01.service
@@ -106,6 +107,4 @@ Now A is dumping and B is queuing messages. However, A has a lower priority and 
 ```
 
 Then A will be queuing messaging while B will be dumping, just like what is indicated by their timestamps.
-
-
 
