@@ -520,6 +520,7 @@ void kafka_cache_purge(struct chained_cache *queue[], int index, int safe_action
       if (json_str) {
 	Log(LOG_DEBUG, "DEBUG ( %s/%s ): %s\n\n", config.name, config.type, json_str);
 	ret = p_kafka_produce_data(&kafkap_kafka_host, json_str, strlen(json_str));
+
 	free(json_str);
 	json_str = NULL;
       }
@@ -556,7 +557,7 @@ void kafka_cache_purge(struct chained_cache *queue[], int index, int safe_action
 
 	if (p_avro_local_buf) {
 	  ret = p_kafka_produce_data(&kafkap_kafka_host, p_avro_local_buf, strlen(p_avro_local_buf));
-    free(p_avro_local_buf);
+	  free(p_avro_local_buf);
 	}
       }
 
@@ -741,6 +742,7 @@ void kafka_cache_purge(struct chained_cache *queue[], int index, int safe_action
 
         Log(LOG_DEBUG, "DEBUG ( %s/%s ): %s\n\n", config.name, config.type, json_str);
         ret = p_kafka_produce_data(&kafkap_kafka_host, json_str, strlen(json_str));
+
 	if (config.sql_multi_values) {
 	  json_str = tmp_str;
 	  strcpy(json_buf, json_str);
@@ -781,11 +783,11 @@ void kafka_cache_purge(struct chained_cache *queue[], int index, int safe_action
 
 	if (config.message_broker_output & PRINT_OUTPUT_AVRO_BIN) { 
 	  ret = p_kafka_produce_data(&kafkap_kafka_host, p_avro_buf, p_avro_len);
-    if (!config.kafka_avro_schema_registry) avro_writer_reset(p_avro_writer);
+	  if (!config.kafka_avro_schema_registry) avro_writer_reset(p_avro_writer);
 	}
 	else if (config.message_broker_output & PRINT_OUTPUT_AVRO_JSON) {
 	  ret = p_kafka_produce_data(&kafkap_kafka_host, p_avro_buf, strlen(p_avro_buf));
-    memset(p_avro_buf, 0, config.avro_buffer_size);
+	  memset(p_avro_buf, 0, config.avro_buffer_size);
         }
 
         p_avro_buffer_full = FALSE;
@@ -805,6 +807,7 @@ void kafka_cache_purge(struct chained_cache *queue[], int index, int safe_action
 	/* no handling of dyn routing keys here: not compatible */
 	Log(LOG_DEBUG, "DEBUG ( %s/%s ): %s\n\n", config.name, config.type, json_buf);
 	ret = p_kafka_produce_data(&kafkap_kafka_host, json_buf, strlen(json_buf));
+
 	if (!ret) qn += mv_num;
       }
     }
@@ -814,14 +817,14 @@ void kafka_cache_purge(struct chained_cache *queue[], int index, int safe_action
       if (config.message_broker_output & PRINT_OUTPUT_AVRO_BIN) {
 	if (p_avro_len) {
 	  ret = p_kafka_produce_data(&kafkap_kafka_host, p_avro_buf, p_avro_len);
-    if (!config.kafka_avro_schema_registry) avro_writer_free(p_avro_writer);
+	  if (!config.kafka_avro_schema_registry) avro_writer_free(p_avro_writer);
           if (!ret) qn += mv_num;
 	}
       }
       else if (config.message_broker_output & PRINT_OUTPUT_AVRO_JSON) {
         if (strlen(p_avro_buf)) {
 	  ret = p_kafka_produce_data(&kafkap_kafka_host, p_avro_buf, strlen(p_avro_buf));
-    if (!ret) qn += mv_num;
+	  if (!ret) qn += mv_num;
 	}
       }
 #endif
@@ -843,6 +846,7 @@ void kafka_cache_purge(struct chained_cache *queue[], int index, int safe_action
 		     the last message in batch in case of partitioned topics */
         Log(LOG_DEBUG, "DEBUG ( %s/%s ): %s\n\n", config.name, config.type, json_str);
         ret = p_kafka_produce_data(&kafkap_kafka_host, json_str, strlen(json_str));
+
         free(json_str);
         json_str = NULL;
       }
@@ -872,14 +876,14 @@ void kafka_cache_purge(struct chained_cache *queue[], int index, int safe_action
 	}
 #endif
 	ret = p_kafka_produce_data(&kafkap_kafka_host, p_avro_buf, p_avro_len);
-  if (!config.kafka_avro_schema_registry) avro_writer_reset(p_avro_writer);
+	if (!config.kafka_avro_schema_registry) avro_writer_reset(p_avro_writer);
       }
       else if (config.message_broker_output & PRINT_OUTPUT_AVRO_JSON) {
 	char *p_avro_local_buf = write_avro_json_record_to_buf(p_avro_value);
 
 	if (p_avro_local_buf) {
 	  ret = p_kafka_produce_data(&kafkap_kafka_host, p_avro_local_buf, strlen(p_avro_local_buf));
-    free(p_avro_local_buf);
+	  free(p_avro_local_buf);
 	}
       }
 
